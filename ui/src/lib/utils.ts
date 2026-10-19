@@ -168,6 +168,19 @@ export function updateLogToHtml(log: string) {
 }
 
 /**
+ * Like {@link updateLogToHtml}, but split into lines,
+ * so new lines can be rendered without touching earlier ones.
+ * @param log incoming log string
+ */
+export function updateLogToHtmlLines(log: string) {
+  // Stream mode carries colors across lines
+  const convert = new ConvertAnsiToHtml({ stream: true });
+  return sanitizeOnlySpan(log)
+    .split("\n")
+    .map((line) => convert.toHtml(line));
+}
+
+/**
  * Converts the ansi colors in log to html.
  * sanitizes incoming log first for any eg. script tags.
  * @param log incoming log string

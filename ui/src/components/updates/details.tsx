@@ -1,7 +1,7 @@
 import { fmtVersion } from "@/lib/formatting";
 import { useRead } from "@/lib/hooks";
 import { useWebsocketMessages } from "@/lib/socket";
-import { updateLogToHtml, versionIsNone } from "@/lib/utils";
+import { updateLogToHtmlLines, versionIsNone } from "@/lib/utils";
 import { ResourceComponents, UsableResource } from "@/resources";
 import { ActionIcon, Code, Drawer, Group, Stack, Text } from "@mantine/core";
 import UserAvatar from "@/components/user-avatar";
@@ -19,7 +19,7 @@ import { LoadingScreen } from "mogh_ui";
 import { atom, useAtom } from "jotai";
 import ResourceLink from "@/resources/link";
 import { To, useLocation, useNavigate } from "react-router-dom";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 
 const updateDetailsAtom = atom<string>();
 
@@ -218,6 +218,7 @@ function LogOutput({ output }: { output: string }) {
   const ref = useRef<HTMLPreElement>(null);
   const atBottom = useRef(true);
   const prevOutput = useRef(output);
+  const lines = useMemo(() => updateLogToHtmlLines(output), [output]);
 
   useLayoutEffect(() => {
     // Only on new output, so opening a finished log still starts at the top
@@ -239,10 +240,17 @@ function LogOutput({ output }: { output: string }) {
         atBottom.current =
           el.scrollHeight - el.scrollTop - el.clientHeight < 20;
       }}
-      dangerouslySetInnerHTML={{
-        __html: updateLogToHtml(output),
-      }}
       style={{ overflowY: "auto", whiteSpace: "pre-wrap" }}
-    />
+    >
+      {/* Per line, so new output doesn't replace the rest and clear any selection */}
+      {lines.map((line, i) => (
+        <span
+          key={i}
+          dangerouslySetInnerHTML={{
+            __html: i < lines.length - 1 ? line + "\n" : line,
+          }}
+        />
+      ))}
+    </Code>
   );
 }
