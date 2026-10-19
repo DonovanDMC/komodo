@@ -2,6 +2,8 @@ use std::{path::Path, time::Duration};
 
 use tokio_util::sync::CancellationToken;
 
+use crate::LiveLogSender;
+
 /// Controls for how a command is executed.
 ///
 /// When either timeout or cancel is set, the child is spawned in its own process group so
@@ -25,6 +27,9 @@ pub struct CommandOptions<'a> {
   /// secret into the command, it never appears in the process arguments,
   /// where any user on the host could read it out of `ps`.
   pub stdin: Option<&'a str>,
+  /// Send output here line by line as the command runs,
+  /// on top of collecting it into the final output.
+  pub live: Option<LiveLogSender>,
 }
 
 impl<'a> CommandOptions<'a> {
@@ -53,6 +58,14 @@ impl CommandOptions<'_> {
     cancel: impl Into<Option<CancellationToken>>,
   ) -> Self {
     self.cancel = cancel.into();
+    self
+  }
+
+  pub fn live(
+    mut self,
+    live: impl Into<Option<LiveLogSender>>,
+  ) -> Self {
+    self.live = live.into();
     self
   }
 }

@@ -29,7 +29,7 @@ use tracing::Instrument;
 use crate::{
   config::periphery_config,
   docker::compose::{docker_compose, parse_compose_services},
-  helpers::{format_extra_args, format_log_grep},
+  helpers::{format_extra_args, format_log_grep, spawn_live_log},
   stack::{
     maybe_login_registry, pull_or_clone_stack, validate_files,
     write::write_stack,
@@ -448,6 +448,7 @@ impl Resolve<crate::api::Args> for ComposeUp {
       git_token,
       registry_token,
       mut replacers,
+      live_log,
     } = self;
 
     let mut res = DeployStackResponse::default();
@@ -460,6 +461,9 @@ impl Resolve<crate::api::Args> for ComposeUp {
       .interpolate_stack(&mut stack)?
       .push_logs(&mut res.logs);
     replacers.extend(interpolator.secret_replacers);
+
+    let live =
+      spawn_live_log(&args.core, live_log, replacers.clone()).await;
 
     let (run_directory, env_file_path) = match write_stack(
       &stack,
@@ -503,7 +507,9 @@ impl Resolve<crate::api::Args> for ComposeUp {
       if let Some(log) = run_komodo_command_with_sanitization(
         "Pre Deploy",
         &stack.config.pre_deploy.command,
-        CommandOptions::default().path(pre_deploy_path.as_path()),
+        CommandOptions::default()
+          .path(pre_deploy_path.as_path())
+          .live(live.clone()),
         if stack.config.pre_deploy.shell_mode {
           KomodoCommandMode::Shell
         } else {
@@ -652,7 +658,9 @@ impl Resolve<crate::api::Args> for ComposeUp {
       let Some(log) = run_komodo_command_with_sanitization(
         "Compose Build",
         command,
-        CommandOptions::default().path(run_directory.as_path()),
+        CommandOptions::default()
+          .path(run_directory.as_path())
+          .live(live.clone()),
         mode,
         &replacers,
       )
@@ -695,7 +703,9 @@ impl Resolve<crate::api::Args> for ComposeUp {
       let Some(log) = run_komodo_command_with_sanitization(
         "Compose Pull",
         command,
-        CommandOptions::default().path(run_directory.as_path()),
+        CommandOptions::default()
+          .path(run_directory.as_path())
+          .live(live.clone()),
         mode,
         &replacers,
       )
@@ -743,7 +753,9 @@ impl Resolve<crate::api::Args> for ComposeUp {
     let Some(log) = run_komodo_command_with_sanitization(
       "Compose Up",
       command,
-      CommandOptions::default().path(run_directory.as_path()),
+      CommandOptions::default()
+        .path(run_directory.as_path())
+        .live(live.clone()),
       KomodoCommandMode::Shell,
       &replacers,
     )
@@ -763,7 +775,9 @@ impl Resolve<crate::api::Args> for ComposeUp {
       if let Some(log) = run_komodo_command_with_sanitization(
         "Post Deploy",
         &stack.config.post_deploy.command,
-        CommandOptions::default().path(post_deploy_path.as_path()),
+        CommandOptions::default()
+          .path(post_deploy_path.as_path())
+          .live(live.clone()),
         if stack.config.post_deploy.shell_mode {
           KomodoCommandMode::Shell
         } else {

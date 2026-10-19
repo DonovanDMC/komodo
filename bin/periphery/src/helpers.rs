@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context;
 use command::{
-  CommandOptions, KomodoCommandMode,
+  CommandOptions, KomodoCommandMode, LiveLogEvent, LiveLogSender,
   run_komodo_command_with_sanitization, run_standard_command,
 };
 use environment::write_env_file;
@@ -20,8 +20,9 @@ use komodo_client::{
 };
 use periphery_client::api::git::PeripheryRepoExecutionResponse;
 use shell_escape::unix::escape;
+use uuid::Uuid;
 
-use crate::config::periphery_config;
+use crate::{config::periphery_config, state::core_connections};
 
 // ============
 //  Formatting
@@ -236,6 +237,48 @@ pub async fn handle_post_repo_execution(
   }
 
   Ok(res)
+}
+
+// ==========
+//  Live Log
+// ==========
+
+/// Forwards live command output to Core over `channel`,
+/// sanitized with `replacers`. Returns None if Core
+/// didn't ask for it, or isn't connected.
+pub async fn spawn_live_log(
+  core: &str,
+  channel: Option<Uuid>,
+  replacers: Vec<(String, String)>,
+) -> Option<LiveLogSender> {
+  let channel = channel?;
+  let Some(connection) =
+    core_connections().get(&core.to_string()).await
+  else {
+    warn!("Failed to start live log | No connection for {core}");
+    return None;
+  };
+  let (sender, mut receiver) =
+    tokio::sync::mpsc::unbounded_channel::<LiveLogEvent>();
+  tokio::spawn(async move {
+    while let Some(event) = receiver.recv().await {
+      let event = event.sanitize(&replacers);
+      let bytes = match serde_json::to_vec(&event) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+          warn!("Failed to serialize live log event | {e:#}");
+          continue;
+        }
+      };
+      if let Err(e) =
+        connection.sender.send_terminal(channel, Ok(bytes)).await
+      {
+        debug!("Failed to send live log event | {e:#}");
+        break;
+      }
+    }
+  });
+  Some(sender)
 }
 
 // =======

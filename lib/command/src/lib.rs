@@ -4,11 +4,16 @@ use komodo_client::{
   entities::{komodo_timestamp, update::Log},
   parsers::parse_multiline_command,
 };
-use tokio::process::Command;
+use tokio::{
+  io::{AsyncBufReadExt, AsyncRead, BufReader},
+  process::{Child, Command},
+};
 
+mod live;
 mod options;
 mod output;
 
+pub use live::*;
 pub use options::*;
 pub use output::*;
 
@@ -20,6 +25,12 @@ pub async fn run_komodo_standard_command(
 ) -> Log {
   let command = command.into();
   let start_ts = komodo_timestamp();
+  if let Some(live) = &options.live {
+    let _ = live.send(LiveLogEvent::Start {
+      stage: stage.to_string(),
+      command: command.clone(),
+    });
+  }
   let output = run_standard_command(&command, options).await;
   output_into_log(stage, command, start_ts, output)
 }
@@ -32,6 +43,12 @@ pub async fn run_komodo_shell_command(
 ) -> Log {
   let command = command.into();
   let start_ts = komodo_timestamp();
+  if let Some(live) = &options.live {
+    let _ = live.send(LiveLogEvent::Start {
+      stage: stage.to_string(),
+      command: command.clone(),
+    });
+  }
   let output = run_shell_command(&command, options).await;
   output_into_log(stage, command, start_ts, output)
 }
@@ -196,6 +213,7 @@ async fn run_command(
     timeout,
     cancel,
     stdin,
+    live,
   } = options;
 
   // Attach the path to cmd as current dir
@@ -217,7 +235,11 @@ async fn run_command(
 
   // Fast path: nothing to write, and nothing to wait
   // on besides the command itself.
-  if timeout.is_none() && cancel.is_none() && stdin.is_none() {
+  if timeout.is_none()
+    && cancel.is_none()
+    && stdin.is_none()
+    && live.is_none()
+  {
     return CommandOutput::from(cmd.output().await);
   }
 
@@ -255,7 +277,7 @@ async fn run_command(
 
   // Nothing to signal on, so just wait for it to finish.
   if timeout.is_none() && cancel.is_none() {
-    return CommandOutput::from(child.wait_with_output().await);
+    return wait_with_output(child, live).await;
   }
 
   // Resolve to `()` only when the relevant control fires; otherwise stay
@@ -274,8 +296,8 @@ async fn run_command(
   };
 
   let killed_reason = tokio::select! {
-    output = child.wait_with_output() => {
-      return CommandOutput::from(output);
+    output = wait_with_output(child, live) => {
+      return output;
     }
     _ = on_timeout => format!(
       "Command timed out after {:.1}s (process group killed)",
@@ -289,6 +311,57 @@ async fn run_command(
 
   kill_process_group(pid);
   CommandOutput::from_err_message(killed_reason)
+}
+
+/// Like `child.wait_with_output()`, but also forwards
+/// each line to `live` as it comes in.
+async fn wait_with_output(
+  mut child: Child,
+  live: Option<LiveLogSender>,
+) -> CommandOutput {
+  let Some(live) = live else {
+    return CommandOutput::from(child.wait_with_output().await);
+  };
+  let stdout = child.stdout.take();
+  let stderr = child.stderr.take();
+  let (status, stdout, stderr) = tokio::join!(
+    child.wait(),
+    read_live(stdout, &live, LiveLogEvent::Stdout),
+    read_live(stderr, &live, LiveLogEvent::Stderr),
+  );
+  match status {
+    Ok(status) => CommandOutput {
+      status,
+      stdout,
+      stderr,
+    },
+    Err(e) => CommandOutput::from_err(e),
+  }
+}
+
+async fn read_live(
+  pipe: Option<impl AsyncRead + Unpin>,
+  live: &LiveLogSender,
+  event: fn(String) -> LiveLogEvent,
+) -> String {
+  let Some(pipe) = pipe else {
+    return String::new();
+  };
+  let mut reader = BufReader::new(pipe);
+  let mut output = String::new();
+  let mut buf = Vec::new();
+  loop {
+    buf.clear();
+    match reader.read_until(b'\n', &mut buf).await {
+      Ok(0) | Err(_) => break,
+      Ok(_) => {
+        let line = String::from_utf8_lossy(&buf);
+        output.push_str(&line);
+        let _ = live.send(event(line.into_owned()));
+      }
+    }
+  }
+  output
 }
 
 /// Sends `SIGKILL` to the entire process group led by `pid`.
@@ -426,6 +499,37 @@ mod tests {
       via_command,
       "control failed: interpolated secret should be visible in ps"
     );
+  }
+
+  /// With [CommandOptions::live] set, each line is sent as it is
+  /// written, after a Start event, and still lands in the output.
+  #[tokio::test]
+  async fn live_output_is_streamed() {
+    let (live, mut events) = tokio::sync::mpsc::unbounded_channel();
+    let run = tokio::spawn(run_komodo_shell_command(
+      "Test",
+      "echo one; sleep 1; echo two >&2",
+      CommandOptions::default().live(live),
+    ));
+
+    assert!(matches!(
+      events.recv().await,
+      Some(LiveLogEvent::Start { stage, .. }) if stage == "Test"
+    ));
+    assert!(matches!(
+      events.recv().await,
+      Some(LiveLogEvent::Stdout(line)) if line == "one\n"
+    ));
+    assert!(!run.is_finished(), "first line should arrive mid-run");
+    assert!(matches!(
+      events.recv().await,
+      Some(LiveLogEvent::Stderr(line)) if line == "two\n"
+    ));
+
+    let log = run.await.unwrap();
+    assert!(log.success, "{log:?}");
+    assert_eq!(log.stdout, "one\n");
+    assert_eq!(log.stderr, "two\n");
   }
 
   /// Cancelling the token mid-run must kill the whole process group, just

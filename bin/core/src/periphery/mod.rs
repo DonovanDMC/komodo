@@ -16,6 +16,7 @@ use crate::{
   state::periphery_connections,
 };
 
+pub mod live_log;
 pub mod terminal;
 
 #[derive(Debug)]

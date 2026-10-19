@@ -211,8 +211,14 @@ impl Resolve<ExecuteArgs> for DeployStack {
         .await?
       }
       SwarmOrServer::Server(server) => {
-        periphery_client(server)
-          .await?
+        let periphery = periphery_client(server).await?;
+        // Live output is best effort, deploy without it on failure.
+        let live = periphery
+          .live_log(&update)
+          .await
+          .inspect_err(|e| warn!("Failed to start live log | {e:#}"))
+          .ok();
+        let res = periphery
           .request(ComposeUp {
             stack: stack.clone(),
             services: self.services,
@@ -220,8 +226,13 @@ impl Resolve<ExecuteArgs> for DeployStack {
             git_token,
             registry_token,
             replacers: secret_replacers.into_iter().collect(),
+            live_log: live.as_ref().map(|live| live.channel),
           })
-          .await?
+          .await;
+        if let Some(live) = live {
+          live.finish().await;
+        }
+        res?
       }
     };
 

@@ -1255,6 +1255,7 @@ version = "0.0.0"
 dependencies = [
  "komodo_client",
  "libc",
+ "serde",
  "shlex 2.0.1",
  "svi",
  "tokio",
@@ -2254,7 +2255,6 @@ dependencies = [
  "komodo_client",
  "mogh_cache",
  "tokio",
- "urlencoding",
 ]
 
 [[package]]
@@ -2899,7 +2899,6 @@ name = "interpolate"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "formatting",
  "komodo_client",
  "svi",
 ]

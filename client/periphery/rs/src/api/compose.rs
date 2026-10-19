@@ -7,6 +7,7 @@ use komodo_client::entities::{
 use mogh_resolver::Resolve;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use uuid::Uuid;
 
 use crate::api::DeployStackResponse;
 
@@ -182,6 +183,10 @@ pub struct ComposeUp {
   /// Propogate any secret replacers from core interpolation.
   #[serde(default)]
   pub replacers: Vec<(String, String)>,
+  /// If provided, stream command output to Core over this
+  /// terminal channel while deploying.
+  #[serde(default)]
+  pub live_log: Option<Uuid>,
 }
 
 //
