@@ -19,6 +19,7 @@ import { LoadingScreen } from "mogh_ui";
 import { atom, useAtom } from "jotai";
 import ResourceLink from "@/resources/link";
 import { To, useLocation, useNavigate } from "react-router-dom";
+import { useLayoutEffect, useRef } from "react";
 
 const updateDetailsAtom = atom<string>();
 
@@ -196,34 +197,52 @@ export function UpdateDetailsContent({ id }: { id: string }) {
             {log.stdout && (
               <Stack className="bordered-light" bdrs="md" p="md">
                 <Text fw="bold">stdout</Text>
-                <Code
-                  component="pre"
-                  fz="sm"
-                  mah={500}
-                  dangerouslySetInnerHTML={{
-                    __html: updateLogToHtml(log.stdout),
-                  }}
-                  style={{ overflowY: "auto", whiteSpace: "pre-wrap" }}
-                />
+                <LogOutput output={log.stdout} />
               </Stack>
             )}
             {log.stderr && (
               <Stack className="bordered-light" bdrs="md" p="md">
                 <Text fw="bold">stderr</Text>
-                <Code
-                  component="pre"
-                  fz="sm"
-                  mah={500}
-                  dangerouslySetInnerHTML={{
-                    __html: updateLogToHtml(log.stderr),
-                  }}
-                  style={{ overflowY: "auto", whiteSpace: "pre-wrap" }}
-                />
+                <LogOutput output={log.stderr} />
               </Stack>
             )}
           </Section>
         ))}
       </Stack>
     </Stack>
+  );
+}
+
+/** Follows new output while scrolled to the bottom, stops once scrolled up. */
+function LogOutput({ output }: { output: string }) {
+  const ref = useRef<HTMLPreElement>(null);
+  const atBottom = useRef(true);
+  const prevOutput = useRef(output);
+
+  useLayoutEffect(() => {
+    // Only on new output, so opening a finished log still starts at the top
+    if (prevOutput.current === output) return;
+    prevOutput.current = output;
+    if (atBottom.current && ref.current) {
+      ref.current.scrollTop = ref.current.scrollHeight;
+    }
+  }, [output]);
+
+  return (
+    <Code
+      ref={ref}
+      component="pre"
+      fz="sm"
+      mah={500}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        atBottom.current =
+          el.scrollHeight - el.scrollTop - el.clientHeight < 20;
+      }}
+      dangerouslySetInnerHTML={{
+        __html: updateLogToHtml(output),
+      }}
+      style={{ overflowY: "auto", whiteSpace: "pre-wrap" }}
+    />
   );
 }
